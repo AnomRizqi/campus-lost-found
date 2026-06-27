@@ -55,19 +55,24 @@ try {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 
     // 5. Seed default admin if not exists
-    $stmt = $pdo->prepare("SELECT id FROM profiles WHERE role = 'admin' OR email = 'admin@campus.com'");
+    $stmt = $pdo->prepare("SELECT id FROM profiles WHERE email = 'admin@campus.com'");
     $stmt->execute();
     if (!$stmt->fetch()) {
-        $adminId = generate_uuid();
-        $adminPasswordHash = password_hash('admin123', PASSWORD_BCRYPT);
-        $stmt = $pdo->prepare("INSERT INTO profiles (id, full_name, email, role, password_hash) VALUES (:id, :full_name, :email, 'admin', :password_hash)");
-        $stmt->execute([
-            'id' => $adminId,
-            'full_name' => 'Admin Campus',
-            'email' => 'admin@campus.com',
-            'password_hash' => $adminPasswordHash
-        ]);
+        try {
+            $adminId = generate_uuid();
+            $adminPasswordHash = password_hash('admin123', PASSWORD_BCRYPT);
+            $stmt = $pdo->prepare("INSERT IGNORE INTO profiles (id, full_name, email, role, password_hash) VALUES (:id, :full_name, :email, 'admin', :password_hash)");
+            $stmt->execute([
+                'id' => $adminId,
+                'full_name' => 'Admin Campus',
+                'email' => 'admin@campus.com',
+                'password_hash' => $adminPasswordHash
+            ]);
+        } catch (PDOException $ex) {
+            // Ignore potential race-condition duplicate errors
+        }
     }
+
 
 
 } catch (PDOException $e) {
