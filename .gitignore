@@ -25,4 +25,6 @@ dist.zip
 *.sln
 *.sw?
 .env
+api/uploads/
+
 
