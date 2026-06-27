@@ -2,6 +2,26 @@
 // This file replaces the Supabase Cloud SDK with a local PHP/MySQL API client.
 // It maintains the exact same interface so frontend React components do not need to change.
 
+export interface User {
+  id: string;
+  email?: string;
+  role?: string;
+  user_metadata: {
+    full_name?: string;
+    role?: string;
+  };
+  created_at?: string;
+}
+
+export interface Session {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  refresh_token: string;
+  user: User;
+}
+
+
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost/campus-lost-found/api';
 
 // Registry for local real-time callbacks
