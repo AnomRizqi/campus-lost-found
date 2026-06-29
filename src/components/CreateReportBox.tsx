@@ -135,45 +135,22 @@ export const CreateReportBox: React.FC<CreateReportBoxProps> = ({
       let finalImageUrl = existingImageUrl
 
       if (imageFile) {
-        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost/campus-lost-found/api'
+        const formData = new FormData()
+        formData.append('file', imageFile)
 
-        if (isLocal) {
-          // 1. Local Upload via PHP Backend (Development)
-          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost/campus-lost-found/api'
-          const formData = new FormData()
-          formData.append('file', imageFile)
+        const res = await fetch(`${API_URL}/upload.php`, {
+          method: 'POST',
+          body: formData
+        })
 
-          const res = await fetch(`${API_URL}/upload.php`, {
-            method: 'POST',
-            body: formData
-          })
-
-          if (!res.ok) {
-            const errorData = await res.json().catch(() => ({}))
-            throw new Error(errorData.error || 'Gagal mengunggah gambar ke server lokal.')
-          }
-
-          const data = await res.json()
-          finalImageUrl = data.url
-        } else {
-          // 2. Cloud Upload via Firebase Storage (Production / Vercel)
-          try {
-            const { storage } = await import('../lib/firebase')
-            const { ref, uploadBytes, getDownloadURL } = await import('firebase/storage')
-
-            const fileExt = imageFile.name.split('.').pop()
-            const fileName = `item-photos/${profile.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`
-            const storageRef = ref(storage, fileName)
-            
-            await uploadBytes(storageRef, imageFile)
-            finalImageUrl = await getDownloadURL(storageRef)
-          } catch (storageErr: any) {
-            console.error('Firebase Storage upload failed:', storageErr)
-            throw new Error(
-              'Gagal mengunggah gambar ke Firebase Storage. Harap pastikan layanan Cloud Storage sudah diaktifkan di Firebase Console Anda dan Rules-nya sudah diset ke publik.'
-            )
-          }
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}))
+          throw new Error(errorData.error || 'Gagal mengunggah gambar ke folder server.')
         }
+
+        const data = await res.json()
+        finalImageUrl = data.url
       }
 
       if (reportToEdit) {
