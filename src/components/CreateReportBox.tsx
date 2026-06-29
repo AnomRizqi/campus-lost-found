@@ -21,6 +21,49 @@ interface CreateReportBoxProps {
   onClose?: () => void // In case it's rendered inside a modal
 }
 
+const compressImageToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.readAsDataURL(file)
+    reader.onload = (event) => {
+      const img = new window.Image()
+      img.src = event.target?.result as string
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const MAX_WIDTH = 800
+        const MAX_HEIGHT = 800
+        let width = img.width
+        let height = img.height
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width
+            width = MAX_WIDTH
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height
+            height = MAX_HEIGHT
+          }
+        }
+
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          resolve(event.target?.result as string)
+          return
+        }
+        ctx.drawImage(img, 0, 0, width, height)
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.6)
+        resolve(compressedBase64)
+      }
+      img.onerror = (err) => reject(err)
+    }
+    reader.onerror = (err) => reject(err)
+  })
+}
+
 export const CreateReportBox: React.FC<CreateReportBoxProps> = ({ 
   reportToEdit, 
   onReportCreated, 
@@ -135,22 +178,36 @@ export const CreateReportBox: React.FC<CreateReportBoxProps> = ({
       let finalImageUrl = existingImageUrl
 
       if (imageFile) {
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost/campus-lost-found/api'
-        const formData = new FormData()
-        formData.append('file', imageFile)
+        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 
-        const res = await fetch(`${API_URL}/upload.php`, {
-          method: 'POST',
-          body: formData
-        })
+        if (isLocal) {
+          // 1. Local Upload via PHP Backend (Development)
+          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost/campus-lost-found/api'
+          const formData = new FormData()
+          formData.append('file', imageFile)
 
-        if (!res.ok) {
-          const errorData = await res.json().catch(() => ({}))
-          throw new Error(errorData.error || 'Gagal mengunggah gambar ke folder server.')
+          const res = await fetch(`${API_URL}/upload.php`, {
+            method: 'POST',
+            body: formData
+          })
+
+          if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}))
+            throw new Error(errorData.error || 'Gagal mengunggah gambar ke folder server.')
+          }
+
+          const data = await res.json()
+          finalImageUrl = data.url
+        } else {
+          // 2. Base64 compression upload direct to Firestore (Production / Vercel)
+          // Bypasses Spark plan storage block and browser mixed content blocks
+          try {
+            finalImageUrl = await compressImageToBase64(imageFile)
+          } catch (compressErr: any) {
+            console.error('Image compression failed:', compressErr)
+            throw new Error('Gagal memproses gambar untuk diunggah.')
+          }
         }
-
-        const data = await res.json()
-        finalImageUrl = data.url
       }
 
       if (reportToEdit) {
