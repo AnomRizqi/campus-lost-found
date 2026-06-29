@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/firebase'
+import { collection, query, orderBy, getDocs, doc, updateDoc, deleteDoc } from 'firebase/firestore'
 import type { Profile, Report } from '../types'
 import { Sidebar } from '../components/Sidebar'
 import { RightSidebar } from '../components/RightSidebar'
@@ -46,49 +47,45 @@ export const AdminDashboard: React.FC = () => {
   const fetchData = async () => {
     setLoading(true)
     try {
-      // 1. Fetch pending reports
-      const { data: pendingData, error: pendingError } = await supabase
-        .from('reports')
-        .select(`
-          *,
-          profiles (
-            id,
-            full_name,
-            email,
-            role
-          )
-        `)
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
+      // 1. Fetch all user profiles from Firestore
+      const usersColl = collection(db, 'profiles')
+      const usersQuery = query(usersColl, orderBy('created_at', 'desc'))
+      const usersSnap = await getDocs(usersQuery)
+      const usersData = usersSnap.docs.map(doc => doc.data() as Profile)
+      setUsers(usersData)
 
-      if (pendingError) throw pendingError
-      setPendingReports(pendingData as Report[])
+      // Create a user mapping dictionary for fast creator profile lookups
+      const userMap: Record<string, Profile> = {}
+      usersData.forEach(u => {
+        userMap[u.id] = u
+      })
 
-      // 2. Fetch all reports
-      const { data: allData, error: allReportError } = await supabase
-        .from('reports')
-        .select(`
-          *,
-          profiles (
-            id,
-            full_name,
-            email,
-            role
-          )
-        `)
-        .order('created_at', { ascending: false })
+      // 2. Fetch all reports from Firestore
+      const reportsColl = collection(db, 'reports')
+      const reportsQuery = query(reportsColl, orderBy('created_at', 'desc'))
+      const reportsSnap = await getDocs(reportsQuery)
+      
+      const reportsData: Report[] = []
+      reportsSnap.docs.forEach(doc => {
+        const rData = doc.data()
+        reportsData.push({
+          id: doc.id,
+          user_id: rData.user_id,
+          type: rData.type,
+          title: rData.title,
+          description: rData.description,
+          category: rData.category,
+          location: rData.location,
+          image_url: rData.image_url || null,
+          contact_info: rData.contact_info,
+          status: rData.status,
+          created_at: rData.created_at,
+          profiles: userMap[rData.user_id]
+        } as Report)
+      })
 
-      if (allReportError) throw allReportError
-      setAllReports(allData as Report[])
-
-      // 3. Fetch all user profiles
-      const { data: userData, error: userError } = await supabase
-        .from('profiles')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      if (userError) throw userError
-      setUsers(userData as Profile[])
+      setAllReports(reportsData)
+      setPendingReports(reportsData.filter(r => r.status === 'pending'))
 
     } catch (err) {
       console.error('Error fetching admin dashboard data:', err)
@@ -108,12 +105,9 @@ export const AdminDashboard: React.FC = () => {
     if (!confirm(`Apakah Anda yakin ingin mengubah peran ${targetUser.full_name} menjadi ${newRole === 'admin' ? 'Admin' : 'Pengguna'}?`)) return
 
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({ role: newRole })
-        .eq('id', targetUser.id)
+      const userRef = doc(db, 'profiles', targetUser.id)
+      await updateDoc(userRef, { role: newRole })
 
-      if (error) throw error
       setUsers(users.map(u => u.id === targetUser.id ? { ...u, role: newRole } : u))
     } catch (err) {
       console.error('Error toggling user role:', err)
@@ -125,12 +119,9 @@ export const AdminDashboard: React.FC = () => {
     if (!confirm('PERINGATAN: Menghapus profil ini akan menghapus semua data akun mereka. Apakah Anda yakin?')) return
 
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .delete()
-        .eq('id', userId)
+      const userRef = doc(db, 'profiles', userId)
+      await deleteDoc(userRef)
 
-      if (error) throw error
       setUsers(users.filter(u => u.id !== userId))
       fetchData() // Refresh reports
     } catch (err) {

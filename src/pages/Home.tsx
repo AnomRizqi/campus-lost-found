@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
-import type { Report } from '../types'
+import { db } from '../lib/firebase'
+import { collection, query, orderBy, doc, getDoc, onSnapshot } from 'firebase/firestore'
+import type { Report, Profile } from '../types'
 import { Sidebar } from '../components/Sidebar'
 import { RightSidebar } from '../components/RightSidebar'
 import { CreateReportBox } from '../components/CreateReportBox'
@@ -34,60 +35,79 @@ export const Home: React.FC = () => {
   const [isReportModalOpen, setIsReportModalOpen] = useState(false)
 
   const fetchReports = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      let query = supabase
-        .from('reports')
-        .select(`
-          *,
-          profiles (
-            id,
-            full_name,
-            email,
-            role
-          )
-        `)
-        .order('created_at', { ascending: false })
-
-      // If user is logged in, show approved reports OR their own reports
-      if (profile) {
-        query = query.or(`status.eq.approved,user_id.eq.${profile.id}`)
-      } else {
-        query = query.eq('status', 'approved')
-      }
-
-      const { data, error: fetchError } = await query
-
-      if (fetchError) throw fetchError
-      setReports(data as Report[])
-    } catch (err: any) {
-      console.error('Error fetching feed reports:', err)
-      setError('Tidak dapat memuat laporan. Silakan coba lagi.')
-    } finally {
-      setLoading(false)
-    }
+    // Kept for compatibility with child components triggering refreshes.
+    // The onSnapshot listener handles real-time updates automatically.
   }
 
   useEffect(() => {
-    fetchReports()
+    setLoading(true)
+    setError(null)
 
-    // Real-time subscription to reports table
-    const channel = supabase
-      .channel('feed_reports_realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'reports' },
-        () => {
-          fetchReports()
+    const q = query(collection(db, 'reports'), orderBy('created_at', 'desc'))
+
+    const unsubscribe = onSnapshot(q, async (querySnapshot) => {
+      try {
+        const reportsData: Report[] = []
+        const profileCache: Record<string, Profile> = {}
+
+        for (const reportDoc of querySnapshot.docs) {
+          const data = reportDoc.data()
+          const reportId = reportDoc.id
+          const userId = data.user_id
+
+          const isApproved = data.status === 'approved'
+          const isOwner = profile && userId === profile.id
+          const isAdmin = profile && profile.role === 'admin'
+
+          if (isApproved || isOwner || isAdmin) {
+            let creatorProfile: Profile | undefined = undefined
+            if (userId) {
+              if (profileCache[userId]) {
+                creatorProfile = profileCache[userId]
+              } else {
+                const profileSnap = await getDoc(doc(db, 'profiles', userId))
+                if (profileSnap.exists()) {
+                  creatorProfile = profileSnap.data() as Profile
+                  profileCache[userId] = creatorProfile
+                }
+              }
+            }
+
+            reportsData.push({
+              id: reportId,
+              user_id: userId,
+              type: data.type,
+              title: data.title,
+              description: data.description,
+              category: data.category,
+              location: data.location,
+              image_url: data.image_url || null,
+              contact_info: data.contact_info,
+              status: data.status,
+              created_at: data.created_at,
+              profiles: creatorProfile
+            } as Report)
+          }
         }
-      )
-      .subscribe()
+
+        setReports(reportsData)
+        setLoading(false)
+        setError(null)
+      } catch (err: any) {
+        console.error('Error fetching/listening to Firestore reports:', err)
+        setError('Tidak dapat memuat laporan. Silakan coba lagi.')
+        setLoading(false)
+      }
+    }, (err) => {
+      console.error('Firestore onSnapshot listener error:', err)
+      setError('Gagal mendengarkan perubahan laporan secara real-time.')
+      setLoading(false)
+    })
 
     return () => {
-      supabase.removeChannel(channel)
+      unsubscribe()
     }
-  }, [profile?.id])
+  }, [profile?.id, profile?.role])
 
   const filteredReports = reports.filter((report) => {
     // Type filter

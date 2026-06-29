@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/firebase'
+import { doc, updateDoc, deleteDoc } from 'firebase/firestore'
 import type { Report } from '../types'
 import { 
   MapPin, 
@@ -30,12 +31,9 @@ export const ReportCard: React.FC<ReportCardProps> = ({ report, onRefresh, onEdi
     if (!profile || profile.role !== 'admin') return
     setModerating(true)
     try {
-      const { error } = await supabase
-        .from('reports')
-        .update({ status: newStatus })
-        .eq('id', report.id)
+      const reportRef = doc(db, 'reports', report.id)
+      await updateDoc(reportRef, { status: newStatus })
 
-      if (error) throw error
       if (onRefresh) onRefresh()
     } catch (err) {
       console.error('Error updating status:', err)
@@ -49,12 +47,9 @@ export const ReportCard: React.FC<ReportCardProps> = ({ report, onRefresh, onEdi
     if (!confirm('Apakah Anda yakin ingin menghapus laporan ini? Tindakan ini tidak dapat dibatalkan.')) return
     setDeleting(true)
     try {
-      const { error } = await supabase
-        .from('reports')
-        .delete()
-        .eq('id', report.id)
+      const reportRef = doc(db, 'reports', report.id)
+      await deleteDoc(reportRef)
 
-      if (error) throw error
       if (onRefresh) onRefresh()
     } catch (err) {
       console.error('Error deleting report:', err)

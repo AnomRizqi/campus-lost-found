@@ -1,15 +1,24 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { supabase, type User, type Session } from '../lib/supabase'
+import { auth, db, googleProvider } from '../lib/firebase'
+import { 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut as firebaseSignOut,
+  signInWithPopup
+} from 'firebase/auth'
+import type { User as FirebaseUser } from 'firebase/auth'
+import { doc, getDoc, setDoc } from 'firebase/firestore'
 import type { Profile } from '../types'
 
 interface AuthContextType {
-  user: User | null
-  session: Session | null
+  user: FirebaseUser | null
+  session: FirebaseUser | null
   profile: Profile | null
   loading: boolean
-  signUp: (email: string, password: string, fullName: string, role?: 'user' | 'admin') => Promise<{ success: boolean; requiresVerification: boolean; error?: string }>
+  signUp: (email: string, password: string, fullName: string, role?: 'user' | 'admin') => Promise<{ success: boolean; error?: string }>
   signIn: (email: string, password: string) => Promise<{ success: boolean; error?: string }>
-  verifyOtp: (email: string, token: string) => Promise<{ success: boolean; error?: string }>
+  signInWithGoogle: () => Promise<{ success: boolean; error?: string }>
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
 }
@@ -17,43 +26,41 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
+  const [user, setUser] = useState<FirebaseUser | null>(null)
+  const [session, setSession] = useState<FirebaseUser | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
 
   const fetchProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single()
+      const docRef = doc(db, 'profiles', userId)
+      const docSnap = await getDoc(docRef)
 
-      if (error) {
-        // Fallback: If profile table exists but trigger is slow/missing, try creating it from metadata
-        const { data: { user } } = await supabase.auth.getUser()
-        if (user) {
-          const metadata = user.user_metadata
-          const { data: newProfile, error: insertError } = await supabase
-            .from('profiles')
-            .upsert({
-              id: user.id,
-              full_name: metadata.full_name || 'Anonymous User',
-              email: user.email || '',
-              role: metadata.role || 'user',
-            })
-            .select()
-            .single()
-
-          if (!insertError) {
-            setProfile(newProfile)
-            return
+      if (docSnap.exists()) {
+        const data = docSnap.data()
+        setProfile({
+          id: docSnap.id,
+          full_name: data.full_name || 'User Baru',
+          email: data.email || '',
+          role: data.role || 'user',
+          created_at: data.created_at || new Date().toISOString()
+        } as Profile)
+      } else {
+        // Fallback: If user is authenticated but Firestore profile doesn't exist, try to recreate it
+        const currentUser = auth.currentUser
+        if (currentUser) {
+          const newProfile: Profile = {
+            id: currentUser.uid,
+            full_name: currentUser.displayName || 'User Baru',
+            email: currentUser.email || '',
+            role: 'user',
+            created_at: new Date().toISOString()
           }
+          await setDoc(docRef, newProfile)
+          setProfile(newProfile)
+          return
         }
         setProfile(null)
-      } else {
-        setProfile(data)
       }
     } catch (err) {
       console.error('Error fetching profile:', err)
@@ -63,43 +70,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshProfile = async () => {
     if (user) {
-      await fetchProfile(user.id)
+      await fetchProfile(user.uid)
     }
   }
 
   useEffect(() => {
-    // Check active session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        fetchProfile(session.user.id)
-      } else {
-        setProfile(null)
-        setLoading(false)
-      }
-    })
-
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, currentSession) => {
-      setSession(currentSession)
-      setUser(currentSession?.user ?? null)
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser)
+      setSession(currentUser)
 
-      if (currentSession?.user) {
-        await fetchProfile(currentSession.user.id)
+      if (currentUser) {
+        await fetchProfile(currentUser.uid)
       } else {
         setProfile(null)
       }
-
       setLoading(false)
     })
 
-    return () => {
-      subscription.unsubscribe()
-    }
+    return () => unsubscribe()
   }, [])
 
-  // Keep loading false after initial profile load
+  // Keep loading false after profile fetches or if there's no user
   useEffect(() => {
     if (user && profile) {
       setLoading(false)
@@ -115,72 +107,98 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     role: 'user' | 'admin' = 'user'
   ) => {
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: fullName,
-            role,
-          },
-        },
-      })
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password)
+      const currentUser = userCredential.user
 
-      if (error) throw error
-
-      // If user session is returned immediately, email verification is disabled in Supabase dashboard
-      const hasSession = !!data.session
-      return {
-        success: true,
-        requiresVerification: !hasSession,
+      // Create profile document in Firestore
+      const newProfile: Profile = {
+        id: currentUser.uid,
+        full_name: fullName,
+        email: email,
+        role: role,
+        created_at: new Date().toISOString()
       }
+      await setDoc(doc(db, 'profiles', currentUser.uid), newProfile)
+      setProfile(newProfile)
+
+      return { success: true }
     } catch (err: any) {
+      console.error('Error during sign up:', err)
+      let errorMessage = 'Terjadi kesalahan saat mendaftar.'
+      if (err.code === 'auth/email-already-in-use') {
+        errorMessage = 'Alamat email sudah digunakan oleh akun lain.'
+      } else if (err.code === 'auth/weak-password') {
+        errorMessage = 'Kata sandi terlalu lemah (minimal 6 karakter).'
+      } else if (err.code === 'auth/invalid-email') {
+        errorMessage = 'Alamat email tidak valid.'
+      }
       return {
         success: false,
-        requiresVerification: false,
-        error: err.message || 'An error occurred during sign up.',
+        error: err.message || errorMessage,
       }
     }
   }
 
   const signIn = async (email: string, password: string) => {
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      })
-
-      if (error) throw error
+      await signInWithEmailAndPassword(auth, email, password)
       return { success: true }
     } catch (err: any) {
+      console.error('Error during sign in:', err)
+      let errorMessage = 'Email atau kata sandi salah.'
+      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        errorMessage = 'Email atau kata sandi salah.'
+      }
       return {
         success: false,
-        error: err.message || 'An error occurred during sign in.',
+        error: err.message || errorMessage,
       }
     }
   }
 
-  const verifyOtp = async (email: string, token: string) => {
+  const signInWithGoogle = async () => {
     try {
-      const { error } = await supabase.auth.verifyOtp({
-        email,
-        token,
-        type: 'signup',
-      })
+      const result = await signInWithPopup(auth, googleProvider)
+      const currentUser = result.user
 
-      if (error) throw error
+      // Check if user profile already exists
+      const docRef = doc(db, 'profiles', currentUser.uid)
+      const docSnap = await getDoc(docRef)
+
+      if (!docSnap.exists()) {
+        const newProfile: Profile = {
+          id: currentUser.uid,
+          full_name: currentUser.displayName || 'Google User',
+          email: currentUser.email || '',
+          role: 'user',
+          created_at: new Date().toISOString()
+        }
+        await setDoc(docRef, newProfile)
+        setProfile(newProfile)
+      } else {
+        const data = docSnap.data()
+        setProfile({
+          id: docSnap.id,
+          full_name: data.full_name || 'Google User',
+          email: data.email || '',
+          role: data.role || 'user',
+          created_at: data.created_at || new Date().toISOString()
+        } as Profile)
+      }
+
       return { success: true }
     } catch (err: any) {
+      console.error('Error Google sign in:', err)
       return {
         success: false,
-        error: err.message || 'Invalid or expired verification code.',
+        error: err.message || 'Terjadi kesalahan saat masuk dengan Google.',
       }
     }
   }
 
   const signOut = async () => {
     setLoading(true)
-    await supabase.auth.signOut()
+    await firebaseSignOut(auth)
     setUser(null)
     setSession(null)
     setProfile(null)
@@ -196,7 +214,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         signUp,
         signIn,
-        verifyOtp,
+        signInWithGoogle,
         signOut,
         refreshProfile,
       }}
@@ -213,3 +231,4 @@ export const useAuth = () => {
   }
   return context
 }
+

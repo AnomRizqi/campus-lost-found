@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/firebase'
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore'
 import type { Profile as ProfileType, Report } from '../types'
 import { Sidebar } from '../components/Sidebar'
 import { RightSidebar } from '../components/RightSidebar'
@@ -35,51 +36,60 @@ export const Profile: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('')
 
-  const isOwnProfile = currentUserProfile?.id === id
-
   const fetchProfileData = async () => {
     if (!id) return
     setLoadingProfile(true)
     setError(null)
     try {
-      // 1. Fetch Profile
-      const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', id)
-        .single()
+      // 1. Fetch Profile from Firestore
+      const docRef = doc(db, 'profiles', id)
+      const docSnap = await getDoc(docRef)
 
-      if (profileError) throw profileError
-      setProfile(profileData as ProfileType)
+      if (!docSnap.exists()) {
+        throw new Error('Profil tidak ditemukan.')
+      }
+      const profileData = docSnap.data() as ProfileType
+      setProfile(profileData)
 
-      // 2. Fetch User's Reports
-      // If viewing own profile or if current user is admin, fetch all statuses. Otherwise, fetch only approved.
-      const isAdmin = currentUserProfile?.role === 'admin'
-      let reportQuery = supabase
-        .from('reports')
-        .select(`
-          *,
-          profiles (
-            id,
-            full_name,
-            email,
-            role
-          )
-        `)
-        .eq('user_id', id)
-        .order('created_at', { ascending: false })
+      // 2. Fetch User's Reports from Firestore
+      const reportsCol = collection(db, 'reports')
+      const q = query(reportsCol, where('user_id', '==', id))
+      
+      const reportSnap = await getDocs(q)
+      const reportData: Report[] = []
 
-      if (!isOwnProfile && !isAdmin) {
-        reportQuery = reportQuery.eq('status', 'approved')
+      for (const reportDoc of reportSnap.docs) {
+        const rData = reportDoc.data()
+        const isApproved = rData.status === 'approved'
+        const isOwner = currentUserProfile && rData.user_id === currentUserProfile.id
+        const isAdminUser = currentUserProfile && currentUserProfile.role === 'admin'
+
+        if (isApproved || isOwner || isAdminUser) {
+          reportData.push({
+            id: reportDoc.id,
+            user_id: rData.user_id,
+            type: rData.type,
+            title: rData.title,
+            description: rData.description,
+            category: rData.category,
+            location: rData.location,
+            image_url: rData.image_url || null,
+            contact_info: rData.contact_info,
+            status: rData.status,
+            created_at: rData.created_at,
+            profiles: profileData
+          } as Report)
+        }
       }
 
-      const { data: reportData, error: reportError } = await reportQuery
-      if (reportError) throw reportError
-      setReports(reportData as Report[])
+      // Sort client-side by created_at descending
+      reportData.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+      setReports(reportData)
 
     } catch (err: any) {
       console.error('Error fetching profile data:', err)
-      setError('Could not load profile details.')
+      setError('Gagal memuat detail profil.')
     } finally {
       setLoadingProfile(false)
       setLoadingReports(false)

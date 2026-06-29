@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/firebase'
+import { collection, addDoc, doc, updateDoc } from 'firebase/firestore'
 import type { Report } from '../types'
 import { 
   Image, 
@@ -134,59 +135,52 @@ export const CreateReportBox: React.FC<CreateReportBoxProps> = ({
       let finalImageUrl = existingImageUrl
 
       if (imageFile) {
-        const fileExt = imageFile.name.split('.').pop()
-        const fileName = `${profile.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`
-        
-        const { error: uploadError } = await supabase.storage
-          .from('item-photos')
-          .upload(fileName, imageFile, {
-            cacheControl: '3600',
-            upsert: false
-          })
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost/campus-lost-found/api'
+        const formData = new FormData()
+        formData.append('file', imageFile)
 
-        if (uploadError) throw uploadError
+        const res = await fetch(`${API_URL}/upload.php`, {
+          method: 'POST',
+          body: formData
+        })
 
-        const { data } = supabase.storage
-          .from('item-photos')
-          .getPublicUrl(fileName)
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}))
+          throw new Error(errorData.error || 'Gagal mengunggah gambar ke server lokal.')
+        }
 
-        finalImageUrl = data.publicUrl
+        const data = await res.json()
+        finalImageUrl = data.url
       }
 
       if (reportToEdit) {
         // Edit Mode
-        const { error: updateError } = await supabase
-          .from('reports')
-          .update({
-            type,
-            title: title.trim(),
-            description: description.trim(),
-            category,
-            location: location.trim(),
-            contact_info: contactInfo.trim(),
-            image_url: finalImageUrl,
-            status: profile.role === 'admin' ? reportToEdit.status : 'pending'
-          })
-          .eq('id', reportToEdit.id)
-
-        if (updateError) throw updateError
+        const reportRef = doc(db, 'reports', reportToEdit.id)
+        await updateDoc(reportRef, {
+          type,
+          title: title.trim(),
+          description: description.trim(),
+          category,
+          location: location.trim(),
+          contact_info: contactInfo.trim(),
+          image_url: finalImageUrl,
+          status: profile.role === 'admin' ? reportToEdit.status : 'pending'
+        })
       } else {
         // Create Mode
-        const { error: insertError } = await supabase
-          .from('reports')
-          .insert({
-            user_id: profile.id,
-            type,
-            title: title.trim(),
-            description: description.trim(),
-            category,
-            location: location.trim(),
-            contact_info: contactInfo.trim(),
-            image_url: finalImageUrl,
-            status: 'pending' // Default pending admin approval
-          })
-
-        if (insertError) throw insertError
+        const reportsColl = collection(db, 'reports')
+        await addDoc(reportsColl, {
+          user_id: profile.id,
+          type,
+          title: title.trim(),
+          description: description.trim(),
+          category,
+          location: location.trim(),
+          contact_info: contactInfo.trim(),
+          image_url: finalImageUrl,
+          status: 'pending', // Default pending admin approval
+          created_at: new Date().toISOString()
+        })
       }
 
       setSuccess(true)

@@ -1,76 +1,66 @@
-# Campus Lost & Found (Migrated to XAMPP/MySQL & PHP)
+# Campus Lost & Found (Firebase & Local Uploads)
 
-Platform pencarian barang hilang dan temuan untuk lingkungan kampus, yang telah dimigrasikan dari **Supabase** ke server lokal berbasis **XAMPP / Laragon** menggunakan database **MySQL** dan API **PHP**.
+Platform pencarian barang hilang dan temuan untuk lingkungan kampus, yang telah dimigrasikan ke **Firebase Cloud Services** (Firestore & Firebase Auth) dengan dukungan masuk lewat akun Google (**Google Sign-in**), serta dikombinasikan dengan server lokal **Laragon / XAMPP** (API PHP) khusus untuk unggahan foto lokal gratis tanpa batasan cloud storage.
 
 ---
 
 ## Fitur Utama
 
-- **Autentikasi Lokal**: Pendaftaran akun, login sesi, dan logout terkelola lokal secara aman.
+- **Autentikasi Firebase**:
+  - Pendaftaran & Masuk akun via **Email & Sandi**.
+  - Masuk cepat menggunakan akun Google (**Google Sign-In**).
 - **Laporan Kehilangan & Temuan**: Pengguna dapat melaporkan barang dengan deskripsi, kategori, lokasi, info kontak, serta unggahan foto.
-- **Unggah Foto Lokal**: Gambar disimpan langsung di direktori server lokal (`api/uploads/`).
-- **Sidebar Statistik Dinamis**: Menampilkan ringkasan jumlah barang hilang, ditemukan, dan laporan tertunda secara langsung.
+- **Unggah Foto Lokal Mandiri**: Gambar disimpan langsung di direktori server lokal (`api/uploads/`) melalui API PHP lokal (`api/upload.php`), memotong batasan penyimpanan cloud Firebase secara gratis.
+- **Real-Time Data Feed**: Halaman beranda memperbarui postingan barang hilang secara langsung dan real-time menggunakan `onSnapshot` Firestore.
+- **Sidebar Statistik Dinamis**: Menampilkan statistik jumlah barang hilang, temuan, dan laporan tertunda secara langsung (`getCountFromServer` hemat kuota).
 - **Dashboard Admin**:
   - Moderasi laporan (menyetujui atau menolak laporan masuk).
   - Manajemen akun (mengubah peran pengguna antara *user* dan *admin*, serta menghapus akun).
-- **Auto-Database Setup**: Database dan tabel-tabel MySQL akan otomatis diinisialisasi pada saat pertama kali server diakses.
+  - Keamanan ekstra: Hanya akun dengan metode login email & sandi yang bisa menjadi Admin (tidak bisa lewat Google Sign-In) untuk mencegah akses tidak sah.
 
 ---
 
-## Panduan Instalasi & Jalankan Lokal (XAMPP / Laragon)
+## Akun Demo Admin Default
 
-### 1. Persiapan Server Lokal
-1. Pastikan Anda memiliki **XAMPP** atau **Laragon** terinstal di komputer Anda.
-2. Aktifkan modul **Apache** dan **MySQL** pada control panel XAMPP/Laragon.
+Aplikasi telah terkonfigurasi untuk login pengujian:
 
-### 2. Konfigurasi Proyek di Web Server
-Karena Apache melayani berkas dari folder root web server (`htdocs` pada XAMPP, atau `www` pada Laragon), salin atau hubungkan folder proyek ini agar bisa dibaca oleh Apache.
-
-**Menggunakan Directory Junction (Direkomendasikan):**
-Buka PowerShell atau Command Prompt sebagai Administrator, lalu jalankan perintah berikut:
-```bash
-# Untuk pengguna XAMPP (menghubungkan folder laragon/www ke xampp/htdocs)
-cmd /c mklink /j C:\xampp\htdocs\campus-lost-found c:\laragon\www\campus-lost-found
-```
-Sekarang, API PHP lokal Anda dapat diakses melalui alamat:
-`http://localhost/campus-lost-found/api/`
-
-### 3. Konfigurasi Environment Variables
-Buat berkas `.env` di direktori utama proyek (jika belum ada) dan isi dengan konfigurasi berikut:
-```env
-VITE_API_URL=http://localhost/campus-lost-found/api
-VITE_SUPABASE_URL=http://localhost/campus-lost-found/api
-VITE_SUPABASE_ANON_KEY=local-key-mock
-```
-
-### 4. Konfigurasi Database
-Database MySQL akan otomatis dibuat dengan konfigurasi default XAMPP/Laragon:
-- **Host**: `localhost`
-- **Username**: `root`
-- **Password**: `""` (kosong)
-- **Nama Database**: `campus_lost_found`
-
-*Catatan: Jika Anda ingin membuat basis data secara manual, impor berkas [database.sql](database.sql) melalui phpMyAdmin.*
-
----
-
-## Akun Login Default
-
-Aplikasi telah dilengkapi dengan data akun awal (*seeding*) yang langsung siap digunakan:
-
-### Akun Admin
-- **Email**: `admin@campus.com`
+- **Email**: `admin1@gmail.com`
 - **Password**: `admin123`
 - **Role**: `admin` (Dapat mengakses halaman `/admin` untuk moderasi laporan dan pengaturan pengguna)
 
-### Akun Pengguna Biasa (Untuk Pengujian)
-Anda dapat langsung melakukan pendaftaran akun baru melalui halaman **Daftar** pada aplikasi.
+*Catatan: Anda dapat membuat user biasa baru secara langsung menggunakan form pendaftaran email atau tombol Google Sign-In pada aplikasi.*
 
 ---
 
-## Menjalankan Aplikasi Frontend (Vite)
+## Panduan Instalasi & Jalankan Lokal
 
-1. Buka terminal di direktori proyek ini (`c:\laragon\www\campus-lost-found`).
+### 1. Persiapan Server Lokal (Khusus Upload Foto)
+1. Pastikan Anda memiliki **Laragon** atau **XAMPP** terinstal di komputer Anda.
+2. Aktifkan modul **Apache** pada control panel Laragon/XAMPP. (Koneksi database MySQL tidak diperlukan lagi karena data disimpan di Firebase cloud).
+3. Pastikan folder proyek berada atau terhubung di web root server Anda agar API PHP upload dapat diakses di:
+   `http://localhost/campus-lost-found/api/upload.php`
+
+### 2. Persiapan Project Firebase
+1. Buka [Firebase Console](https://console.firebase.google.com/) dan buat project baru.
+2. Aktifkan **Authentication** > aktifkan metode masuk **Email/Password** dan **Google**.
+3. Aktifkan **Cloud Firestore** > mulai dalam *Test Mode* (atau terapkan aturan di [firestore.rules](firestore.rules)).
+4. Daftarkan aplikasi Web di dalam project Firebase tersebut untuk mendapatkan konfigurasi SDK.
+
+### 3. Konfigurasi Environment Variables
+Buat berkas `.env` di direktori utama proyek dan isi dengan konfigurasi Firebase Anda:
+```env
+VITE_API_URL=http://localhost/campus-lost-found/api
+
+VITE_FIREBASE_API_KEY=AIzaSyAV_NChEqR4aJHWwWQe6d03spFECau6tA4
+VITE_FIREBASE_AUTH_DOMAIN=lostandfound-bf4c0.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=lostandfound-bf4c0
+VITE_FIREBASE_STORAGE_BUCKET=lostandfound-bf4c0.firebasestorage.app
+VITE_FIREBASE_MESSAGING_SENDER_ID=991416216059
+VITE_FIREBASE_APP_ID=1:991416216059:web:43b0ed222df335e9c8c35e
+```
+
+### 4. Menjalankan Aplikasi Frontend (Vite)
+1. Buka terminal di direktori proyek ini.
 2. Pasang dependensi jika belum dilakukan:
    ```bash
    npm install
@@ -85,17 +75,8 @@ Anda dapat langsung melakukan pendaftaran akun baru melalui halaman **Daftar** p
 
 ## Panduan Deploy ke Vercel (Produksi)
 
-Ketika mendeploy aplikasi frontend (React/Vite) ke **Vercel**, harap perhatikan hal berikut:
-
-1. **Vercel Hanya Meng-host Frontend**:
-   Vercel adalah platform hosting frontend statis/serverless. Vercel tidak menyediakan database MySQL berjalan atau runtime PHP stateful secara bawaan untuk backend Anda.
-   
-2. **Deploy Backend (PHP + MySQL)**:
-   - Anda harus meng-host folder `api/` dan database MySQL Anda di server publik yang mendukung PHP & MySQL (seperti cPanel shared hosting, VPS, Railway, atau Render).
-   - Setelah di-host di server publik, Anda akan mendapatkan URL API publik, contohnya: `https://api.domainanda.com/` atau `https://domainanda.com/campus-lost-found/api/`.
-
-3. **Konfigurasi Environment di Vercel Dashboard**:
-   Pada dashboard proyek Vercel Anda, tambahkan variabel lingkungan berikut agar frontend dapat terhubung ke backend publik Anda:
-   - `VITE_API_URL` = `[URL_API_PUBLIK_ANDA]`
-   - `VITE_SUPABASE_URL` = `[URL_API_PUBLIK_ANDA]`
-   - `VITE_SUPABASE_ANON_KEY` = `local-key-mock`
+Ketika mendeploy aplikasi ini ke **Vercel**:
+1. Karena database (Firestore) dan Autentikasi (Firebase Auth) berjalan di cloud, fungsionalitas utama web akan berfungsi otomatis setelah dideploy.
+2. Tambahkan seluruh isi berkas `.env` ke bagian **Environment Variables** di dashboard proyek Vercel Anda.
+3. **Catatan Penting Mengenai Gambar**:
+   Karena Vercel adalah serverless statis, berkas gambar yang diunggah ke `api/uploads/` akan terhapus secara otomatis oleh Vercel. Untuk lingkungan produksi mandiri penuh di Vercel, disarankan untuk mengaktifkan **Firebase Cloud Storage** publik dan mengubah kode unggahan di `CreateReportBox.tsx` untuk menggunakan Firebase SDK kembali.

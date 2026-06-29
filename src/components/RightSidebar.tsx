@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/firebase'
+import { collection, query, where, getDocs, doc, getDoc, getCountFromServer, onSnapshot } from 'firebase/firestore'
 import type { Report, ReportStats } from '../types'
 import { 
   TrendingUp, 
@@ -39,46 +40,63 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
   const fetchRightSidebarData = async () => {
     try {
-      // 1. Fetch Stats from reports table
-      const [lostRes, foundRes, pendingRes] = await Promise.all([
-        supabase
-          .from('reports')
-          .select('*', { count: 'exact', head: true })
-          .eq('status', 'approved')
-          .eq('type', 'lost'),
-        supabase
-          .from('reports')
-          .select('*', { count: 'exact', head: true })
-          .eq('status', 'approved')
-          .eq('type', 'found'),
-        supabase
-          .from('reports')
-          .select('*', { count: 'exact', head: true })
-          .eq('status', 'pending')
+      const reportsColl = collection(db, 'reports')
+
+      // 1. Fetch Stats from reports collection
+      const qLost = query(reportsColl, where('status', '==', 'approved'), where('type', '==', 'lost'))
+      const qFound = query(reportsColl, where('status', '==', 'approved'), where('type', '==', 'found'))
+      const qPending = query(reportsColl, where('status', '==', 'pending'))
+
+      const [lostSnap, foundSnap, pendingSnap] = await Promise.all([
+        getCountFromServer(qLost),
+        getCountFromServer(qFound),
+        getCountFromServer(qPending)
       ])
 
       setStats({
-        totalLost: lostRes.count || 0,
-        totalFound: foundRes.count || 0,
-        totalPending: pendingRes.count || 0
+        totalLost: lostSnap.data().count,
+        totalFound: foundSnap.data().count,
+        totalPending: pendingSnap.data().count
       })
 
       // 2. Fetch Recent 3 Approved Items
-      const { data, error } = await supabase
-        .from('reports')
-        .select(`
-          *,
-          profiles (
-            full_name
-          )
-        `)
-        .eq('status', 'approved')
-        .order('created_at', { ascending: false })
-        .limit(3)
-
-      if (!error && data) {
-        setRecentItems(data as any[])
+      const qRecent = query(reportsColl, where('status', '==', 'approved'))
+      const recentSnap = await getDocs(qRecent)
+      
+      const items: Report[] = []
+      for (const reportDoc of recentSnap.docs) {
+        const rData = reportDoc.data()
+        const userId = rData.user_id
+        
+        let creatorProfile = undefined
+        if (userId) {
+          const profileSnap = await getDoc(doc(db, 'profiles', userId))
+          if (profileSnap.exists()) {
+            creatorProfile = profileSnap.data()
+          }
+        }
+        
+        items.push({
+          id: reportDoc.id,
+          user_id: userId,
+          type: rData.type,
+          title: rData.title,
+          description: rData.description,
+          category: rData.category,
+          location: rData.location,
+          image_url: rData.image_url || null,
+          contact_info: rData.contact_info,
+          status: rData.status,
+          created_at: rData.created_at,
+          profiles: creatorProfile
+        } as Report)
       }
+      
+      // Sort client-side by created_at descending and limit to 3
+      items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      const limitedItems = items.slice(0, 3)
+      
+      setRecentItems(limitedItems)
     } catch (err) {
       console.error('Error fetching right sidebar data:', err)
     } finally {
@@ -89,20 +107,14 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
   useEffect(() => {
     fetchRightSidebarData()
 
-    // Subscribe to report changes
-    const channel = supabase
-      .channel('right_sidebar_changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'reports' },
-        () => {
-          fetchRightSidebarData()
-        }
-      )
-      .subscribe()
+    // Subscribe to reports collection changes in real-time
+    const reportsColl = collection(db, 'reports')
+    const unsubscribe = onSnapshot(reportsColl, () => {
+      fetchRightSidebarData()
+    })
 
     return () => {
-      supabase.removeChannel(channel)
+      unsubscribe()
     }
   }, [])
 

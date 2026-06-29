@@ -1,5 +1,13 @@
 <?php
-require_once __DIR__ . '/db.php';
+// CORS Headers
+header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Methods: POST, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit(0);
+}
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     send_json(['error' => 'Method not allowed'], 405);
@@ -66,5 +74,13 @@ if (move_uploaded_file($file['tmp_name'], $targetPath)) {
     ]);
 } else {
     send_json(['error' => 'Failed to save uploaded file.'], 500);
+}
+
+// Helper
+function send_json($data, $status = 200) {
+    http_response_code($status);
+    header('Content-Type: application/json');
+    echo json_encode($data);
+    exit;
 }
 ?>
